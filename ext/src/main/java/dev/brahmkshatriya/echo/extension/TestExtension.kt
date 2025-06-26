@@ -32,28 +32,16 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
 
 @Serializable
-data class Home(
-    val totalStations: Long,
-    val stations: List<Station>,
-) {
-
-    @Serializable
-    data class Station(
-        val id: Long,
-        val name: String,
-        val description: String,
-        @SerialName("newlogo")
-        val newLogo: String,
-    )
-}
-
-@Serializable
 data class Station(
     val hits: List<Hit>,
 ) {
 
     @Serializable
     data class Hit(
+        val id: Long,
+        val name: String,
+        val description: String,
+        val logo: String,
         val streams: Stream,
     ) {
 
@@ -69,6 +57,29 @@ data class Station(
     }
 }
 
+@Serializable
+data class Genre(
+    val hits: List<Hit>,
+) {
+
+    @Serializable
+    data class Hit(
+        val id: Long,
+        val name: String,
+    )
+}
+
+@Serializable
+data class StationSearch(
+    val stations: List<Station>,
+) {
+
+    @Serializable
+    data class Station(
+        val id: Long,
+    )
+}
+
 class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient, SearchFeedClient {
     override suspend fun onExtensionSelected() {}
 
@@ -79,8 +90,9 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         setting = settings
     }
 
-    private val searchLink = "https://api.iheart.com/api/v1/catalog/searchStation?&keywords="
+    private val searchLink = "https://api.iheart.com/api/v1/catalog/searchStation/"
     private val stationLink = "https://api.iheart.com/api/v2/content/liveStations/"
+    private val genreLink = "https://api.iheart.com/api/v2/content/genre/"
 
     private val client by lazy { OkHttpClient.Builder().build() }
     private suspend fun call(url: String) = client.newCall(
@@ -105,23 +117,21 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         return ""
     }
 
-    private suspend fun getStream(id: String): String {
-        val streams = call(stationLink + id).toData<Station>().hits[0].streams
-        return streams.shoutcast ?: parsePLS(streams.pls)
-    }
+    private suspend fun getStream(streams: Station.Hit.Stream): String =
+        streams.shoutcast ?: parsePLS(streams.pls)
 
     private suspend fun String.toShelf(): List<Shelf> =
-        this.toData<Home>().stations.filter { result ->
-            getStream(result.id.toString()).isNotEmpty() }.map { result ->
+        this.toData<Station>().hits.filter { result ->
+            getStream(result.streams).isNotEmpty() }.map { result ->
                 Track(
                     id = result.id.toString(),
                     title = result.name,
                     subtitle = result.description,
                     description = result.description,
-                    cover = result.newLogo.toImageHolder(),
+                    cover = result.logo.toImageHolder(),
                     streamables = listOf(
                         Streamable.server(
-                            getStream(result.id.toString()),
+                            getStream(result.streams),
                             0
                         )
                     )
@@ -129,12 +139,13 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
             }
 
     override fun getHomeFeed(tab: Tab?) = PagedData.Single {
-        val apiResponse = call(tab!!.id)
-        apiResponse.toShelf()
+        call(tab!!.id).toShelf()
     }.toFeed()
 
     override suspend fun getHomeTabs(): List<Tab> {
-        return listOf(Tab(title = "Stations", id = "$searchLink%22%22&maxRows=5000"))
+        return call(genreLink).toData<Genre>().hits.map { result ->
+            Tab(title = result.name, id = "$stationLink?&genreId=${result.id}&limit=5000")
+        }
     }
 
     override fun getShelves(track: Track): PagedData<Shelf> {
@@ -165,9 +176,27 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         return emptyList()
     }
 
+    private suspend fun String.toSearchShelf(): List<Shelf> =
+        this.toData<StationSearch>().stations.map { result ->
+            val station = call(stationLink + result.id).toData<Station>().hits[0]
+            Track(
+                id = station.id.toString(),
+                title = station.name,
+                subtitle = station.description,
+                description = station.description,
+                cover = station.logo.toImageHolder(),
+                streamables = listOf(
+                    Streamable.server(
+                        getStream(station.streams),
+                        0
+                    )
+                )
+            ).toMediaItem().toShelf()
+        }
+
     override fun searchFeed(query: String, tab: Tab?) =
         PagedData.Single {
-            call("${searchLink}\"$query\"").toShelf()
+            call("$searchLink?&keywords=\"$query\"").toSearchShelf()
         }.toFeed()
 
     override suspend fun searchTabs(query: String) = emptyList<Tab>()
