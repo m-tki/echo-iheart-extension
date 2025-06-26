@@ -5,7 +5,6 @@ import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
 import dev.brahmkshatriya.echo.common.clients.RadioClient
 import dev.brahmkshatriya.echo.common.clients.SearchFeedClient
-import dev.brahmkshatriya.echo.common.settings.SettingSwitch
 import dev.brahmkshatriya.echo.common.settings.Settings
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem.Companion.toMediaItem
 import dev.brahmkshatriya.echo.common.models.ImageHolder.Companion.toImageHolder
@@ -25,6 +24,7 @@ import dev.brahmkshatriya.echo.common.models.Streamable.Source.Companion.toSourc
 import dev.brahmkshatriya.echo.common.helpers.ClientException
 import dev.brahmkshatriya.echo.common.helpers.PagedData
 import dev.brahmkshatriya.echo.common.helpers.ContinuationCallback.Companion.await
+import dev.brahmkshatriya.echo.common.settings.Setting
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import kotlinx.serialization.Serializable
@@ -72,24 +72,13 @@ data class Station(
 class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient, SearchFeedClient {
     override suspend fun onExtensionSelected() {}
 
-    override val settingItems
-        get() = listOf(
-            SettingSwitch(
-                "Use HLS Stream",
-                "use_hls",
-                "Whether to use HLS or shoutcast streams if both are available for particular station",
-                usdHLS
-            )
-        )
-
-    private val usdHLS get() = setting.getBoolean("use_hls") ?: true
+    override val settingItems get() = emptyList<Setting>()
 
     private lateinit var setting: Settings
     override fun setSettings(settings: Settings) {
         setting = settings
     }
 
-    private val homeLink = "https://api.iheart.com/api/v1/catalog/searchStation?&keywords=%22%22&maxRows=5000"
     private val searchLink = "https://api.iheart.com/api/v1/catalog/searchStation?&keywords="
     private val stationLink = "https://api.iheart.com/api/v2/content/liveStations/"
 
@@ -104,12 +93,21 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
             throw IllegalStateException("Failed to parse JSON: $this", it)
         }
 
+    private suspend fun parsePLS(stream: String?): String {
+        if (stream != null) {
+            val content = call(stream)
+            for (line in content.lines()) {
+                if (line.startsWith("File1=")) {
+                    return line.substring(6)
+                }
+            }
+        }
+        return ""
+    }
+
     private suspend fun getStream(id: String): String {
         val streams = call(stationLink + id).toData<Station>().hits[0].streams
-        return if (usdHLS)
-            streams.hls ?: streams.shoutcast ?: streams.pls ?: ""
-        else
-            streams.shoutcast ?: streams.hls ?: streams.pls ?: ""
+        return streams.shoutcast ?: parsePLS(streams.pls)
     }
 
     private suspend fun String.toShelf(): List<Shelf> =
@@ -136,7 +134,7 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
     }.toFeed()
 
     override suspend fun getHomeTabs(): List<Tab> {
-        return listOf(Tab(title = "Stations", id = homeLink))
+        return listOf(Tab(title = "Stations", id = "$searchLink%22%22&maxRows=5000"))
     }
 
     override fun getShelves(track: Track): PagedData<Shelf> {
@@ -147,9 +145,8 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         streamable: Streamable,
         isDownload: Boolean
     ): Streamable.Media {
-        val response = call(streamable.id).split("\n")
         return Streamable.Media.Server(
-            response.map { it.toSource() },
+            listOf(streamable.id.toSource()),
             false
         )
     }
