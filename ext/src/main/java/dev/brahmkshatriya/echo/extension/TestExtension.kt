@@ -41,7 +41,7 @@ data class Station(
         val id: Long,
         val name: String,
         val description: String,
-        val logo: String,
+        val logo: String? = null,
         val streams: Stream,
     ) {
 
@@ -117,15 +117,15 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         return ""
     }
 
-    private suspend fun getStream(streams: Station.Hit.Stream): String =
-        streams.shoutcast ?: parsePLS(streams.pls)
+    private fun getStream(streams: Station.Hit.Stream): String =
+        streams.shoutcast ?: streams.pls ?: ""
 
-    private val pageSize = 100
+    private fun getStreamType(streams: Station.Hit.Stream): Map<String, String> =
+        streams.shoutcast?.let { mapOf("type" to "shoutcast") }
+            ?: streams.pls?.let { mapOf("type" to "pls") } ?: mapOf()
 
-    private suspend fun String.toShelf(id: String): List<Shelf> {
-        val allHits = this.toData<Station>().hits
-        if (allHits.size <= pageSize) {
-            return allHits.filter {
+    private fun String.toShelf(): List<Shelf> {
+        return this.toData<Station>().hits.filter {
                 getStream(it.streams).isNotEmpty()
             }.map {
                 Track(
@@ -133,50 +133,20 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
                     title = it.name,
                     subtitle = it.description,
                     description = it.description,
-                    cover = it.logo.toImageHolder(),
+                    cover = it.logo?.toImageHolder(),
                     streamables = listOf(
                         Streamable.server(
                             getStream(it.streams),
-                            0
+                            0,
+                            extras = getStreamType(it.streams)
                         )
                     )
                 ).toMediaItem().toShelf()
             }
-        }
-        else {
-            val pageCount = (allHits.size + pageSize - 1) / pageSize
-            return (0 until pageCount).map { pageIndex ->
-                val offset = pageIndex * pageSize
-                Shelf.Category(
-                    title = "Page ${pageIndex + 1}",
-                    items = PagedData.Single {
-                        call("$stationLink?&genreId=$id&offset=$offset&limit=$pageSize")
-                            .toData<Station>()
-                            .hits
-                            .filter { getStream(it.streams).isNotEmpty() }
-                            .map {
-                                Track(
-                                    id = it.id.toString(),
-                                    title = it.name,
-                                    subtitle = it.description,
-                                    description = it.description,
-                                    cover = it.logo.toImageHolder(),
-                                    streamables = listOf(
-                                        Streamable.server(
-                                            getStream(it.streams),
-                                            0
-                                        )
-                                    )
-                                ).toMediaItem().toShelf()
-                            }
-                    }
-                )
-            }
-        }
     }
 
     override fun getHomeFeed(tab: Tab?) = PagedData.Single {
-        call("$stationLink?&genreId=${tab!!.id}&limit=5000").toShelf(tab.id)
+        call("$stationLink?&genreId=${tab!!.id}&limit=5000").toShelf()
     }.toFeed()
 
     override suspend fun getHomeTabs(): List<Tab> {
@@ -193,8 +163,10 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         streamable: Streamable,
         isDownload: Boolean
     ): Streamable.Media {
+        val source = if (streamable.extras["type"] == "pls")
+            parsePLS(streamable.id) else streamable.id
         return Streamable.Media.Server(
-            listOf(streamable.id.toSource()),
+            listOf(source.toSource()),
             false
         )
     }
@@ -221,11 +193,12 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
                 title = station.name,
                 subtitle = station.description,
                 description = station.description,
-                cover = station.logo.toImageHolder(),
+                cover = station.logo?.toImageHolder(),
                 streamables = listOf(
                     Streamable.server(
                         getStream(station.streams),
-                        0
+                        0,
+                        extras = getStreamType(station.streams)
                     )
                 )
             ).toMediaItem().toShelf()
