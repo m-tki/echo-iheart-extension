@@ -58,11 +58,6 @@ data class Station(
 }
 
 @Serializable
-data class SimpleStation(
-    val total: Long,
-)
-
-@Serializable
 data class Genre(
     val hits: List<Hit>,
 ) {
