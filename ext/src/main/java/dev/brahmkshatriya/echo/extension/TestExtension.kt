@@ -120,7 +120,7 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
     private suspend fun getStream(streams: Station.Hit.Stream): String =
         streams.shoutcast ?: parsePLS(streams.pls)
 
-    private suspend fun String.toShelf(offset: Int = 0): List<Shelf> =
+    private suspend fun String.toShelf(): List<Shelf> =
         this.toData<Station>().hits.filter { result ->
             getStream(result.streams).isNotEmpty() }.map { result ->
                 Track(
