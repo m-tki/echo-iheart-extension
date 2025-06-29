@@ -120,7 +120,7 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
     private suspend fun getStream(streams: Station.Hit.Stream): String =
         streams.shoutcast ?: parsePLS(streams.pls)
 
-    private suspend fun String.toShelf(): List<Shelf> =
+    private suspend fun String.toShelf(offset: Int = 0): List<Shelf> =
         this.toData<Station>().hits.filter { result ->
             getStream(result.streams).isNotEmpty() }.map { result ->
                 Track(
@@ -142,9 +142,41 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         call(tab!!.id).toShelf()
     }.toFeed()
 
+    private val pageSize = 100
+
     override suspend fun getHomeTabs(): List<Tab> {
-        return call(genreLink).toData<Genre>().hits.map { result ->
-            Tab(title = result.name, id = "$stationLink?&genreId=${result.id}&limit=5000")
+        // Get all genres
+        val genres = call(genreLink)
+            .toData<Genre>()
+            .hits
+
+        return genres.flatMap { genre ->
+            // Fetch ALL stations for this genre (up to 5000 cap)
+            val allHits = call("$stationLink?&genreId=${genre.id}&limit=5000")
+                .toData<Station>()
+                .hits
+
+            // If it fits on one page, just emit a single tab...
+            if (allHits.size <= pageSize) {
+                listOf(
+                    Tab(
+                        id = "$stationLink?&genreId=${genre.id}&limit=$pageSize",
+                        title = genre.name
+                    )
+                )
+            }
+            // Otherwise chunk into 100-item pages
+            else {
+                val pageCount = (allHits.size + pageSize - 1) / pageSize
+                (0 until pageCount).map { pageIndex ->
+                    val offset = pageIndex * pageSize
+                    Tab(
+                        id = "$stationLink?&genreId=${genre.id}&offset=$offset&limit=$pageSize",
+                        title = "${genre.name} (Page ${pageIndex + 1})",
+                        extras = mapOf("offset" to offset.toString())
+                    )
+                }
+            }
         }
     }
 
