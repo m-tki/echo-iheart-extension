@@ -58,6 +58,11 @@ data class Station(
 }
 
 @Serializable
+data class SimpleStation(
+    val total: Long,
+)
+
+@Serializable
 data class Genre(
     val hits: List<Hit>,
 ) {
@@ -120,63 +125,68 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
     private suspend fun getStream(streams: Station.Hit.Stream): String =
         streams.shoutcast ?: parsePLS(streams.pls)
 
-    private suspend fun String.toShelf(): List<Shelf> =
-        this.toData<Station>().hits.filter { result ->
-            getStream(result.streams).isNotEmpty() }.map { result ->
+    private val pageSize = 100
+
+    private suspend fun String.toShelf(id: String): List<Shelf> {
+        val allHits = this.toData<Station>().hits
+        if (allHits.size <= pageSize) {
+            return allHits.filter {
+                getStream(it.streams).isNotEmpty()
+            }.map {
                 Track(
-                    id = result.id.toString(),
-                    title = result.name,
-                    subtitle = result.description,
-                    description = result.description,
-                    cover = result.logo.toImageHolder(),
+                    id = it.id.toString(),
+                    title = it.name,
+                    subtitle = it.description,
+                    description = it.description,
+                    cover = it.logo.toImageHolder(),
                     streamables = listOf(
                         Streamable.server(
-                            getStream(result.streams),
+                            getStream(it.streams),
                             0
                         )
                     )
                 ).toMediaItem().toShelf()
             }
-
-    override fun getHomeFeed(tab: Tab?) = PagedData.Single {
-        call(tab!!.id).toShelf()
-    }.toFeed()
-
-    private val pageSize = 100
-
-    override suspend fun getHomeTabs(): List<Tab> {
-        // Get all genres
-        val genres = call(genreLink)
-            .toData<Genre>()
-            .hits
-
-        return genres.flatMap { genre ->
-            // Fetch ALL stations for this genre (up to 5000 cap)
-            val allHits = call("$stationLink?&genreId=${genre.id}&limit=5000")
-                .toData<Station>()
-                .hits
-
-            // If it fits on one page, just emit a single tab...
-            if (allHits.size <= pageSize) {
-                listOf(
-                    Tab(
-                        id = "$stationLink?&genreId=${genre.id}&limit=$pageSize",
-                        title = genre.name
-                    )
+        }
+        else {
+            val pageCount = (allHits.size + pageSize - 1) / pageSize
+            return (0 until pageCount).map { pageIndex ->
+                val offset = pageIndex * pageSize
+                Shelf.Category(
+                    title = "Page ${pageIndex + 1}",
+                    items = PagedData.Single {
+                        call("$stationLink?&genreId=$id&offset=$offset&limit=$pageSize")
+                            .toData<Station>()
+                            .hits
+                            .filter { getStream(it.streams).isNotEmpty() }
+                            .map {
+                                Track(
+                                    id = it.id.toString(),
+                                    title = it.name,
+                                    subtitle = it.description,
+                                    description = it.description,
+                                    cover = it.logo.toImageHolder(),
+                                    streamables = listOf(
+                                        Streamable.server(
+                                            getStream(it.streams),
+                                            0
+                                        )
+                                    )
+                                ).toMediaItem().toShelf()
+                            }
+                    }
                 )
             }
-            // Otherwise chunk into 100-item pages
-            else {
-                val pageCount = (allHits.size + pageSize - 1) / pageSize
-                (0 until pageCount).map { pageIndex ->
-                    val offset = pageIndex * pageSize
-                    Tab(
-                        id = "$stationLink?&genreId=${genre.id}&offset=$offset&limit=$pageSize",
-                        title = "${genre.name} (Page ${pageIndex + 1})",
-                        extras = mapOf("offset" to offset.toString())
-                    )
-                }
-            }
+        }
+    }
+
+    override fun getHomeFeed(tab: Tab?) = PagedData.Single {
+        call("$stationLink?&genreId=${tab!!.id}&limit=5000").toShelf(tab.id)
+    }.toFeed()
+
+    override suspend fun getHomeTabs(): List<Tab> {
+        return call(genreLink).toData<Genre>().hits.map {
+            Tab(title = it.name, id = it.id.toString())
         }
     }
 
