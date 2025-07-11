@@ -109,17 +109,10 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
                 "default_genres",
                 "Whether to display only default genres on the home page or all available genres",
                 defaultGenres
-            ),
-            SettingSwitch(
-                "Use HLS",
-                "use_hls",
-                "Whether to use HLS or shoutcast stream when both are available for a particular station",
-                useHls
             )
         )
 
     private val defaultGenres get() = setting.getBoolean("default_genres") ?: true
-    private val useHls get() = setting.getBoolean("use_hls") ?: false
 
     private lateinit var setting: Settings
     override fun setSettings(settings: Settings) {
@@ -153,32 +146,29 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         return ""
     }
 
-    private fun getStream(streams: Station.Hit.Stream): Pair<String, String> {
-        val stream = if (useHls)
-            streams.hls?.let { it to "hls" }
-                ?: streams.shoutcast?.let { it to "shoutcast" }
-        else
-            streams.shoutcast?.let { it to "shoutcast" }
-                ?: streams.hls?.let { it to "hls" }
-        return stream ?: streams.pls?.let { it to "pls" } ?: ("" to "")
-    }
+    private fun createStreamableServers(streams: Station.Hit.Stream): List<Streamable> =
+        listOfNotNull(
+            streams.hls?.let { it to "HLS" },
+            streams.shoutcast?.let { it to "Shoutcast" },
+            streams.pls?.let { it to "PLS" }
+        ).mapIndexed { idx, stream ->
+            Streamable.server(
+                stream.first,
+                idx,
+                stream.second,
+                mapOf("type" to stream.second.lowercase())
+            )
+        }
 
     private fun String.toShelf(): List<Shelf> {
         return this.toData<Station>().hits.map {
-            val stream = getStream(it.streams)
             Track(
-                id = "${it.id}_${stream.second}",
+                id = it.id.toString(),
                 title = it.name,
                 subtitle = it.description,
                 description = it.description,
                 cover = it.logo?.toImageHolder(),
-                streamables = listOf(
-                    Streamable.server(
-                        stream.first,
-                        0,
-                        extras = mapOf("type" to stream.second)
-                    )
-                )
+                streamables = createStreamableServers(it.streams)
             ).toMediaItem().toShelf()
         }
     }
@@ -238,20 +228,13 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
     private suspend fun String.toSearchShelf(): List<Shelf> =
         this.toData<StationSearch>().stations.map { result ->
             val station = call(stationLink + result.id).toData<Station>().hits[0]
-            val stream = getStream(station.streams)
             Track(
-                id = "${station.id}_${stream.second}",
+                id = station.id.toString(),
                 title = station.name,
                 subtitle = station.description,
                 description = station.description,
                 cover = station.logo?.toImageHolder(),
-                streamables = listOf(
-                    Streamable.server(
-                        stream.first,
-                        0,
-                        extras = mapOf("type" to stream.second)
-                    )
-                )
+                streamables = createStreamableServers(station.streams)
             ).toMediaItem().toShelf()
         }
 
