@@ -148,9 +148,9 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
 
     private fun createStreamableServers(streams: Station.Hit.Stream): List<Streamable> =
         listOfNotNull(
-            streams.hls?.let { it to "HLS" },
-            streams.shoutcast?.let { it to "Shoutcast" },
-            streams.pls?.let { it to "PLS" }
+            streams.hls?.takeIf { it.isNotEmpty() }?.let { it to "HLS" },
+            streams.shoutcast?.takeIf { it.isNotEmpty() }?.let { it to "Shoutcast" },
+            streams.pls?.takeIf { it.isNotEmpty() }?.let { it to "PLS" }
         ).mapIndexed { idx, stream ->
             Streamable.server(
                 stream.first,
