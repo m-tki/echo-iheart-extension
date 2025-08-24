@@ -153,11 +153,7 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
         Track(
             station.id.toString(),
             station.name,
-            subtitle = if (isStreamAvailable(station.streams))
-                station.description else {
-                    if (station.description.isEmpty()) "Not Supported"
-                    else "Not Supported - ${station.description}"
-            },
+            subtitle = station.description,
             description = station.description,
             cover = station.logo?.toImageHolder(),
             streamables = createStreamableServers(station.streams),
