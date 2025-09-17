@@ -160,11 +160,11 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
             isPlayable = if (isStreamAvailable(station.streams))
                 Track.Playable.Yes else
                 Track.Playable.No("No Supported Streams Found")
-        ).toShelf()
+        )
 
     private fun String.toShelf(): List<Shelf> {
         return this.toData<Station>().hits.map {
-            createTrack(it)
+            createTrack(it).toShelf()
         }
     }
 
@@ -177,28 +177,44 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
             }.toFeed()
         )
 
+    private fun String.toMediaItems(): List<EchoMediaItem> {
+        return this.toData<Station>().hits.map {
+            createTrack(it)
+        }
+    }
+
+    private suspend fun createShelf(id: Long, name: String) : Shelf? {
+        val items = call("$stationLink?genreId=$id&limit=5000").toMediaItems()
+        return Shelf.Lists.Items(
+            id.toString(),
+            name,
+            items.take(12),
+            more = items.takeIf { items.size > 12 }?.map { it.toShelf() }?.toFeed()
+        ).takeUnless { items.isEmpty() }
+    }
+
     override suspend fun loadHomeFeed(): Feed<Shelf> {
-        val categories = if (defaultGenres) {
-            call(genreLink).toData<Genre>().hits.map {
-                createCategory(it.id, it.name)
-            }
+        if (defaultGenres) {
+            return call(genreLink).toData<Genre>().hits.mapNotNull {
+                createShelf(it.id, it.name)
+            }.toFeed(Feed.Buttons())
         }
         else {
-            call("$stationLink?limit=5000").toData<StationGenre>().hits
+            val categories = call("$stationLink?limit=5000").toData<StationGenre>().hits
                 .flatMap { it.genres }
                 .distinctBy { it.id }
                 .map {
                     createCategory(it.id, it.name)
                 }
+            return listOf(
+                Shelf.Lists.Categories(
+                    "categories",
+                    "Categories",
+                    categories,
+                    type = Shelf.Lists.Type.Grid
+                )
+            ).toFeed(Feed.Buttons())
         }
-        return listOf(
-            Shelf.Lists.Categories(
-                "countries",
-                "Countries",
-                categories,
-                type = Shelf.Lists.Type.Grid
-            )
-        ).toFeed()
     }
 
     override suspend fun loadFeed(track: Track): Feed<Shelf>? = null
@@ -237,7 +253,7 @@ class TestExtension : ExtensionClient, HomeFeedClient, TrackClient, RadioClient,
     private suspend fun String.toSearchShelf(): List<Shelf> =
         this.toData<StationSearch>().stations.map { result ->
             val station = call("$stationLink/${result.id}").toData<Station>().hits[0]
-            createTrack(station)
+            createTrack(station).toShelf()
         }
 
     override suspend fun loadSearchFeed(query: String): Feed<Shelf> =
